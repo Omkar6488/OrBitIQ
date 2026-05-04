@@ -1,0 +1,16 @@
+export const colors = {
+  background: '#040814',
+  card: 'rgba(255,255,255,0.05)',
+  cardBorder: 'rgba(255,255,255,0.14)',
+  primary: '#4FD1FF',
+  accent: '#7B61FF',
+  gradientStart: '#3CA8FF',
+  gradientEnd: '#7B61FF',
+  textPrimary: '#FFFFFF',
+  textSecondary: '#A0AEC0',
+  success: '#68D391',
+  danger: '#FF5A7D',
+  warning: '#F6AD55',
+  shadow: 'rgba(79, 209, 255, 0.25)',
+  neonBlue: 'rgba(79, 209, 255, 0.55)',
+};
