@@ -10,7 +10,8 @@ import useFetch from '../hooks/useFetch';
 import { colors } from '../styles/colors';
 import globalStyles from '../styles/globalStyles';
 import { LAUNCH_REFRESH_MS, LIST_LIMIT } from '../utils/constants';
-import { getFavoritesMap, toggleFavoriteLaunch } from '../services/favoritesService';
+import { useAuth } from '../context/AuthContext';
+import { addBookmark, deleteBookmark, getBookmarks } from '../firebase/firestore';
 
 const AnimatedFlatList = Animated.createAnimatedComponent(FlatList);
 
@@ -23,8 +24,9 @@ export default function LaunchesScreen({
 }) {
   const insets = useSafeAreaInsets();
   const [refreshing, setRefreshing] = useState(false);
-  const [favoritesMap, setFavoritesMap] = useState({});
+  const [bookmarksMap, setBookmarksMap] = useState({});
   const lastRefreshSignal = useRef(refreshSignal);
+  const { currentUser } = useAuth();
 
   const fetchLaunches = useCallback(() => getUpcomingLaunches({ limit: LIST_LIMIT }), []);
 
@@ -40,11 +42,28 @@ export default function LaunchesScreen({
   });
 
   const launches = useMemo(() => data?.results || [], [data]);
-  const favoriteCount = useMemo(() => Object.keys(favoritesMap).length, [favoritesMap]);
+  const favoriteCount = useMemo(
+    () => Object.values(bookmarksMap).filter((item) => item?.type === 'launch').length,
+    [bookmarksMap]
+  );
 
   useEffect(() => {
-    getFavoritesMap().then(setFavoritesMap);
-  }, []);
+    if (!currentUser?.uid) {
+      setBookmarksMap({});
+      return;
+    }
+
+    getBookmarks(currentUser.uid).then((items) => {
+      const nextMap = items.reduce((acc, item) => {
+        const key = item?.sourceId || item?.id;
+        if (key) {
+          acc[key] = item;
+        }
+        return acc;
+      }, {});
+      setBookmarksMap(nextMap);
+    });
+  }, [currentUser?.uid]);
 
   useEffect(() => {
     if (refreshSignal === lastRefreshSignal.current) {
@@ -56,10 +75,40 @@ export default function LaunchesScreen({
     refetch().finally(() => setRefreshing(false));
   }, [refetch, refreshSignal]);
 
-  const toggleFavorite = useCallback(async (launch) => {
-    const next = await toggleFavoriteLaunch(launch);
-    setFavoritesMap(next.favoritesMap);
-  }, []);
+  const toggleFavorite = useCallback(
+    async (launch) => {
+      if (!currentUser?.uid || !launch?.id) {
+        return;
+      }
+
+      const sourceId = launch.id;
+      const existing = bookmarksMap[sourceId];
+      if (existing?.id) {
+        await deleteBookmark(currentUser.uid, existing.id);
+        setBookmarksMap((current) => {
+          const next = { ...current };
+          delete next[sourceId];
+          return next;
+        });
+        return;
+      }
+
+      const payload = {
+        sourceId,
+        title: launch?.name || 'Untitled launch',
+        type: 'launch',
+        timestamp: Date.now(),
+        data: launch,
+      };
+
+      const docRef = await addBookmark(currentUser.uid, payload);
+      setBookmarksMap((current) => ({
+        ...current,
+        [sourceId]: { id: docRef.id, ...payload },
+      }));
+    },
+    [bookmarksMap, currentUser?.uid]
+  );
 
   const onRefresh = useCallback(async () => {
     setRefreshing(true);
@@ -80,10 +129,10 @@ export default function LaunchesScreen({
         launch={item}
         onPress={() => openDetails(item)}
         onToggleFavorite={() => toggleFavorite(item)}
-        isFavorite={!!favoritesMap[item.id]}
+        isFavorite={!!bookmarksMap[item.id]}
       />
     ),
-    [favoritesMap, openDetails, toggleFavorite]
+    [bookmarksMap, openDetails, toggleFavorite]
   );
 
   const topPadding = embedded ? contentTopPadding : getNavbarContentOffset(insets);

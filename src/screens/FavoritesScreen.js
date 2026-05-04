@@ -7,14 +7,8 @@ import NewsCard from '../components/NewsCard';
 import TopNavbar, { getNavbarContentOffset } from '../components/TopNavbar';
 import { colors } from '../styles/colors';
 import globalStyles from '../styles/globalStyles';
-import {
-  getFavoriteNewsMap,
-  getFavoriteNewsList,
-  getFavoritesMap,
-  getFavoritesList,
-  toggleFavoriteLaunch,
-  toggleFavoriteNews,
-} from '../services/favoritesService';
+import { useAuth } from '../context/AuthContext';
+import { addBookmark, deleteBookmark, getBookmarks } from '../firebase/firestore';
 
 const AnimatedFlatList = Animated.createAnimatedComponent(FlatList);
 
@@ -27,29 +21,33 @@ export default function FavoritesScreen({
 }) {
   const insets = useSafeAreaInsets();
   const [type, setType] = useState('launches');
-  const [favoriteLaunchMap, setFavoriteLaunchMap] = useState({});
-  const [favoriteNewsMap, setFavoriteNewsMap] = useState({});
-  const [favoriteLaunches, setFavoriteLaunches] = useState([]);
-  const [favoriteNews, setFavoriteNews] = useState([]);
+  const [bookmarkMap, setBookmarkMap] = useState({});
+  const [bookmarks, setBookmarks] = useState([]);
   const lastRefreshSignal = useRef(refreshSignal);
+  const { currentUser } = useAuth();
 
-  const syncFavorites = useCallback(async () => {
-    const [launchMap, newsMap, launches, news] = await Promise.all([
-      getFavoritesMap(),
-      getFavoriteNewsMap(),
-      getFavoritesList(),
-      getFavoriteNewsList(),
-    ]);
+  const syncBookmarks = useCallback(async () => {
+    if (!currentUser?.uid) {
+      setBookmarkMap({});
+      setBookmarks([]);
+      return;
+    }
 
-    setFavoriteLaunchMap(launchMap);
-    setFavoriteNewsMap(newsMap);
-    setFavoriteLaunches(launches);
-    setFavoriteNews(news);
-  }, []);
+    const items = await getBookmarks(currentUser.uid);
+    const nextMap = items.reduce((acc, item) => {
+      const key = item?.sourceId || item?.id;
+      if (key) {
+        acc[key] = item;
+      }
+      return acc;
+    }, {});
+    setBookmarkMap(nextMap);
+    setBookmarks(items);
+  }, [currentUser?.uid]);
 
   useEffect(() => {
-    syncFavorites();
-  }, [syncFavorites]);
+    syncBookmarks();
+  }, [syncBookmarks]);
 
   useEffect(() => {
     if (refreshSignal === lastRefreshSignal.current) {
@@ -57,31 +55,76 @@ export default function FavoritesScreen({
     }
 
     lastRefreshSignal.current = refreshSignal;
-    syncFavorites();
-  }, [refreshSignal, syncFavorites]);
+    syncBookmarks();
+  }, [refreshSignal, syncBookmarks]);
 
-  const onToggleFavoriteLaunch = useCallback(async (launch) => {
-    const next = await toggleFavoriteLaunch(launch);
-    setFavoriteLaunchMap(next.favoritesMap);
-    setFavoriteLaunches(Object.values(next.favoritesMap));
-  }, []);
+  const onToggleFavoriteLaunch = useCallback(
+    async (launch) => {
+      if (!currentUser?.uid || !launch?.id) {
+        return;
+      }
 
-  const onToggleFavoriteNews = useCallback(async (article) => {
-    const next = await toggleFavoriteNews(article);
-    setFavoriteNewsMap(next.favoritesMap);
-    setFavoriteNews(Object.values(next.favoritesMap));
-  }, []);
+      const sourceId = launch.id;
+      const existing = bookmarkMap[sourceId];
+      if (existing?.id) {
+        await deleteBookmark(currentUser.uid, existing.id);
+        return syncBookmarks();
+      }
+
+      const payload = {
+        sourceId,
+        title: launch?.name || 'Untitled launch',
+        type: 'launch',
+        timestamp: Date.now(),
+        data: launch,
+      };
+
+      await addBookmark(currentUser.uid, payload);
+      return syncBookmarks();
+    },
+    [bookmarkMap, currentUser?.uid, syncBookmarks]
+  );
+
+  const onToggleFavoriteNews = useCallback(
+    async (article) => {
+      if (!currentUser?.uid) {
+        return;
+      }
+
+      const sourceId = article?.id || article?.url;
+      if (!sourceId) {
+        return;
+      }
+
+      const existing = bookmarkMap[sourceId];
+      if (existing?.id) {
+        await deleteBookmark(currentUser.uid, existing.id);
+        return syncBookmarks();
+      }
+
+      const payload = {
+        sourceId,
+        title: article?.title || 'Untitled article',
+        type: 'news',
+        timestamp: Date.now(),
+        data: article,
+      };
+
+      await addBookmark(currentUser.uid, payload);
+      return syncBookmarks();
+    },
+    [bookmarkMap, currentUser?.uid, syncBookmarks]
+  );
 
   const topPadding = embedded ? contentTopPadding : getNavbarContentOffset(insets);
   const isLaunches = type === 'launches';
-  const launchCount = favoriteLaunches.length;
-  const newsCount = favoriteNews.length;
+  const launchCount = bookmarks.filter((item) => item?.type === 'launch').length;
+  const newsCount = bookmarks.filter((item) => item?.type === 'news').length;
 
-  const data = useMemo(() => (isLaunches ? favoriteLaunches : favoriteNews), [
-    favoriteLaunches,
-    favoriteNews,
-    isLaunches,
-  ]);
+  const data = useMemo(
+    () => bookmarks.filter((item) => (isLaunches ? item?.type === 'launch' : item?.type === 'news')),
+    [bookmarks, isLaunches]
+  );
 
   return (
     <SafeAreaView style={globalStyles.screen} edges={['left', 'right', 'bottom']}>
@@ -89,7 +132,7 @@ export default function FavoritesScreen({
         <TopNavbar
           title="Saved Signals"
           onSearchPress={() => navigation.navigate('Search', { initialType: isLaunches ? 'launches' : 'news' })}
-          onRefreshPress={syncFavorites}
+          onRefreshPress={syncBookmarks}
         />
       ) : null}
 
@@ -101,17 +144,17 @@ export default function FavoritesScreen({
         renderItem={({ item }) =>
           isLaunches ? (
             <LaunchCard
-              launch={item}
-              isFavorite={!!favoriteLaunchMap[item?.id]}
-              onPress={() => navigation.navigate('LaunchDetails', { launch: item })}
-              onToggleFavorite={() => onToggleFavoriteLaunch(item)}
+              launch={item?.data}
+              isFavorite={!!bookmarkMap[item?.sourceId]}
+              onPress={() => navigation.navigate('LaunchDetails', { launch: item?.data })}
+              onToggleFavorite={() => onToggleFavoriteLaunch(item?.data)}
             />
           ) : (
             <NewsCard
-              article={item}
-              isFavorite={!!favoriteNewsMap[item?.id || item?.url]}
-              onPress={() => navigation.navigate('NewsDetails', { article: item })}
-              onToggleFavorite={() => onToggleFavoriteNews(item)}
+              article={item?.data}
+              isFavorite={!!bookmarkMap[item?.sourceId]}
+              onPress={() => navigation.navigate('NewsDetails', { article: item?.data })}
+              onToggleFavorite={() => onToggleFavoriteNews(item?.data)}
             />
           )
         }

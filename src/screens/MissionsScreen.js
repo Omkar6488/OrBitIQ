@@ -17,8 +17,9 @@ import { colors } from '../styles/colors';
 import globalStyles from '../styles/globalStyles';
 import { formatDate, formatRelativeTime } from '../utils/formatDate';
 import { LIST_LIMIT } from '../utils/constants';
-import { getFavoritesMap, toggleFavoriteLaunch } from '../services/favoritesService';
 import { Ionicons } from '@expo/vector-icons';
+import { useAuth } from '../context/AuthContext';
+import { addBookmark, deleteBookmark, getBookmarks } from '../firebase/firestore';
 
 const AnimatedFlatList = Animated.createAnimatedComponent(FlatList);
 
@@ -77,16 +78,16 @@ export default function MissionsScreen({
   const [error, setError] = useState(null);
   const [missions, setMissions] = useState([]);
   const [stats, setStats] = useState({ upcoming: 0, previous: 0, agencies: 0 });
-  const [favoritesMap, setFavoritesMap] = useState({});
+  const [bookmarksMap, setBookmarksMap] = useState({});
   const lastRefreshSignal = useRef(refreshSignal);
+  const { currentUser } = useAuth();
 
   const loadData = useCallback(async () => {
     try {
       setError(null);
-      const [upcoming, previous, favoriteMap] = await Promise.all([
+      const [upcoming, previous] = await Promise.all([
         getUpcomingLaunches({ limit: LIST_LIMIT, ordering: 'net' }),
         getPreviousLaunches({ limit: LIST_LIMIT, ordering: '-net' }),
-        getFavoritesMap(),
       ]);
 
       const upcomingResults = Array.isArray(upcoming?.results) ? upcoming.results : [];
@@ -99,7 +100,6 @@ export default function MissionsScreen({
       );
 
       setMissions(missionRecords);
-      setFavoritesMap(favoriteMap);
       setStats({
         upcoming: upcomingResults.length,
         previous: previousResults.length,
@@ -132,14 +132,62 @@ export default function MissionsScreen({
     loadData();
   }, [loadData]);
 
-  const onToggleFavorite = useCallback(async (mission) => {
-    if (!mission?.launch) {
+  useEffect(() => {
+    if (!currentUser?.uid) {
+      setBookmarksMap({});
       return;
     }
 
-    const next = await toggleFavoriteLaunch(mission.launch);
-    setFavoritesMap(next.favoritesMap);
-  }, []);
+    getBookmarks(currentUser.uid).then((items) => {
+      const nextMap = items.reduce((acc, item) => {
+        const key = item?.sourceId || item?.id;
+        if (key) {
+          acc[key] = item;
+        }
+        return acc;
+      }, {});
+      setBookmarksMap(nextMap);
+    });
+  }, [currentUser?.uid]);
+
+  const onToggleFavorite = useCallback(
+    async (mission) => {
+      if (!mission?.launch || !currentUser?.uid) {
+        return;
+      }
+
+      const sourceId = mission.launch.id;
+      if (!sourceId) {
+        return;
+      }
+
+      const existing = bookmarksMap[sourceId];
+      if (existing?.id) {
+        await deleteBookmark(currentUser.uid, existing.id);
+        setBookmarksMap((current) => {
+          const next = { ...current };
+          delete next[sourceId];
+          return next;
+        });
+        return;
+      }
+
+      const payload = {
+        sourceId,
+        title: mission.title || mission.launch?.name || 'Untitled mission',
+        type: 'launch',
+        timestamp: Date.now(),
+        data: mission.launch,
+      };
+
+      const docRef = await addBookmark(currentUser.uid, payload);
+      setBookmarksMap((current) => ({
+        ...current,
+        [sourceId]: { id: docRef.id, ...payload },
+      }));
+    },
+    [bookmarksMap, currentUser?.uid]
+  );
 
   const topPadding = embedded ? contentTopPadding : getNavbarContentOffset(insets);
 
@@ -199,7 +247,7 @@ export default function MissionsScreen({
         scrollEventThrottle={16}
         renderItem={({ item }) => {
           const favoriteKey = item?.launch?.id;
-          const isFavorite = favoriteKey ? !!favoritesMap[favoriteKey] : false;
+          const isFavorite = favoriteKey ? !!bookmarksMap[favoriteKey] : false;
 
           return (
             <Pressable

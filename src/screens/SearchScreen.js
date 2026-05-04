@@ -11,20 +11,16 @@ import { getSpaceNews, getUpcomingLaunches } from '../api/api';
 import { colors } from '../styles/colors';
 import globalStyles from '../styles/globalStyles';
 import { LIST_LIMIT, SEARCH_MIN_CHARS } from '../utils/constants';
-import {
-  getFavoriteNewsMap,
-  getFavoritesMap,
-  toggleFavoriteLaunch,
-  toggleFavoriteNews,
-} from '../services/favoritesService';
 import { searchLaunches, searchNews } from '../services/searchService';
+import { useAuth } from '../context/AuthContext';
+import { addBookmark, deleteBookmark, getBookmarks } from '../firebase/firestore';
 
 export default function SearchScreen({ route, navigation }) {
   const insets = useSafeAreaInsets();
   const [query, setQuery] = useState('');
   const [type, setType] = useState(route?.params?.initialType || 'launches');
-  const [favoriteLaunchMap, setFavoriteLaunchMap] = useState({});
-  const [favoriteNewsMap, setFavoriteNewsMap] = useState({});
+  const [bookmarksMap, setBookmarksMap] = useState({});
+  const { currentUser } = useAuth();
 
   const fetchLaunches = useCallback(() => getUpcomingLaunches({ limit: LIST_LIMIT }), []);
   const fetchNews = useCallback(() => getSpaceNews({ limit: LIST_LIMIT, ordering: '-published_at' }), []);
@@ -37,11 +33,22 @@ export default function SearchScreen({ route, navigation }) {
   });
 
   useEffect(() => {
-    Promise.all([getFavoritesMap(), getFavoriteNewsMap()]).then(([launchMap, newsMap]) => {
-      setFavoriteLaunchMap(launchMap);
-      setFavoriteNewsMap(newsMap);
+    if (!currentUser?.uid) {
+      setBookmarksMap({});
+      return;
+    }
+
+    getBookmarks(currentUser.uid).then((items) => {
+      const nextMap = items.reduce((acc, item) => {
+        const key = item?.sourceId || item?.id;
+        if (key) {
+          acc[key] = item;
+        }
+        return acc;
+      }, {});
+      setBookmarksMap(nextMap);
     });
-  }, []);
+  }, [currentUser?.uid]);
 
   const launches = useMemo(() => launchesData?.results || [], [launchesData]);
   const news = useMemo(() => newsData?.results || [], [newsData]);
@@ -49,15 +56,79 @@ export default function SearchScreen({ route, navigation }) {
   const filteredLaunches = useMemo(() => searchLaunches(launches, query), [launches, query]);
   const filteredNews = useMemo(() => searchNews(news, query), [news, query]);
 
-  const onToggleFavoriteLaunch = useCallback(async (launch) => {
-    const next = await toggleFavoriteLaunch(launch);
-    setFavoriteLaunchMap(next.favoritesMap);
-  }, []);
+  const onToggleFavoriteLaunch = useCallback(
+    async (launch) => {
+      if (!currentUser?.uid || !launch?.id) {
+        return;
+      }
 
-  const onToggleFavoriteNews = useCallback(async (article) => {
-    const next = await toggleFavoriteNews(article);
-    setFavoriteNewsMap(next.favoritesMap);
-  }, []);
+      const sourceId = launch.id;
+      const existing = bookmarksMap[sourceId];
+      if (existing?.id) {
+        await deleteBookmark(currentUser.uid, existing.id);
+        setBookmarksMap((current) => {
+          const next = { ...current };
+          delete next[sourceId];
+          return next;
+        });
+        return;
+      }
+
+      const payload = {
+        sourceId,
+        title: launch?.name || 'Untitled launch',
+        type: 'launch',
+        timestamp: Date.now(),
+        data: launch,
+      };
+
+      const docRef = await addBookmark(currentUser.uid, payload);
+      setBookmarksMap((current) => ({
+        ...current,
+        [sourceId]: { id: docRef.id, ...payload },
+      }));
+    },
+    [bookmarksMap, currentUser?.uid]
+  );
+
+  const onToggleFavoriteNews = useCallback(
+    async (article) => {
+      if (!currentUser?.uid) {
+        return;
+      }
+
+      const sourceId = article?.id || article?.url;
+      if (!sourceId) {
+        return;
+      }
+
+      const existing = bookmarksMap[sourceId];
+      if (existing?.id) {
+        await deleteBookmark(currentUser.uid, existing.id);
+        setBookmarksMap((current) => {
+          const next = { ...current };
+          delete next[sourceId];
+          return next;
+        });
+        return;
+      }
+
+      const payload = {
+        sourceId,
+        title: article?.title || 'Untitled article',
+        type: 'news',
+        timestamp: Date.now(),
+        data: article,
+      };
+
+      const docRef = await addBookmark(currentUser.uid, payload);
+      setBookmarksMap((current) => ({
+        ...current,
+        [sourceId]: { id: docRef.id, ...payload },
+      }));
+    },
+    [bookmarksMap, currentUser?.uid]
+  );
 
   const openLaunchDetails = useCallback(
     (launch) => navigation.navigate('LaunchDetails', { launch }),
@@ -121,7 +192,7 @@ export default function SearchScreen({ route, navigation }) {
             renderItem={({ item }) => (
               <LaunchCard
                 launch={item}
-                isFavorite={!!favoriteLaunchMap[item?.id]}
+                isFavorite={!!bookmarksMap[item?.id]}
                 onPress={() => openLaunchDetails(item)}
                 onToggleFavorite={() => onToggleFavoriteLaunch(item)}
               />
@@ -141,7 +212,7 @@ export default function SearchScreen({ route, navigation }) {
           renderItem={({ item }) => (
             <NewsCard
               article={item}
-              isFavorite={!!favoriteNewsMap[item?.id || item?.url]}
+              isFavorite={!!bookmarksMap[item?.id || item?.url]}
               onPress={() => openNewsDetails(item)}
               onToggleFavorite={() => onToggleFavoriteNews(item)}
             />

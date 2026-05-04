@@ -22,10 +22,16 @@ export default function TopNavbar({
   onSearchPress,
   onNotifyPress,
   notifyIcon = 'notifications-outline',
+  onLogoutPress,
+  logoutIcon = 'log-out-outline',
+  onAuthPress,
+  authIcon = 'person-outline',
   onRefreshPress,
   showSearch = true,
   showNotify,
   showRefresh = true,
+  showLogout = false,
+  showAuth = false,
   showNotifyBadge = false,
   glow = true,
   animatedStyle,
@@ -75,6 +81,18 @@ export default function TopNavbar({
           </Pressable>
         ) : null}
 
+        {showAuth ? (
+          <Pressable style={styles.iconButton} onPress={onAuthPress}>
+            <Ionicons name={authIcon} size={20} color={colors.textPrimary} />
+          </Pressable>
+        ) : null}
+
+        {showLogout ? (
+          <Pressable style={styles.iconButton} onPress={onLogoutPress}>
+            <Ionicons name={logoutIcon} size={20} color={colors.textPrimary} />
+          </Pressable>
+        ) : null}
+
         {resolvedShowNotify ? (
           <Pressable style={styles.iconButton} onPress={resolvedSecondaryPress}>
             <Ionicons name={resolvedSecondaryIcon} size={20} color={colors.textPrimary} />
@@ -82,7 +100,9 @@ export default function TopNavbar({
           </Pressable>
         ) : null}
 
-        {!showSearch && !resolvedShowNotify ? <View style={styles.iconPlaceholder} /> : null}
+        {!showSearch && !showAuth && !showLogout && !resolvedShowNotify ? (
+          <View style={styles.iconPlaceholder} />
+        ) : null}
       </View>
 
       {glow && (

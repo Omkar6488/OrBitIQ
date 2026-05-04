@@ -2,6 +2,7 @@
   "expo": {
     "name": "OrbitIQ",
     "slug": "orbitiq",
+    "scheme": "orbitiq",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
@@ -20,6 +21,7 @@
       }
     },
     "android": {
+      "package": "com.omkar.orbitiq",
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-icon.png",
         "backgroundColor": "#0B0F1A"
@@ -28,6 +30,15 @@
     },
     "web": {
       "favicon": "./assets/favicon.png"
-    }
+    },
+    "plugins": [
+      "expo-web-browser"
+    ],
+    "extra": {
+      "eas": {
+        "projectId": "7727e449-c1b5-484f-bce2-2384410b694f"
+      }
+    },
+    "owner": "omkar6488"
   }
 }

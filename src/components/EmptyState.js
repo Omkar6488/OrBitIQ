@@ -6,7 +6,7 @@ import { colors } from '../styles/colors';
 export default function EmptyState({ title, message, onRetry, icon = 'alert-circle-outline' }) {
   return (
     <View style={styles.container}>
-      <Ionicons name={icon} size={36} color={colors.neonPurple} />
+      <Ionicons name={icon} size={36} color={colors.accent} />
       <Text style={styles.title}>{title}</Text>
       <Text style={styles.message}>{message}</Text>
       {!!onRetry && (

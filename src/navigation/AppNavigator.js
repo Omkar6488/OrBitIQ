@@ -6,6 +6,9 @@ import SearchScreen from '../screens/SearchScreen';
 import LaunchDetailsScreen from '../screens/LaunchDetailsScreen';
 import NewsDetailsScreen from '../screens/NewsDetailsScreen';
 import NotificationsScreen from '../screens/NotificationsScreen';
+import LoginScreen from '../screens/LoginScreen';
+import SignupScreen from '../screens/SignupScreen';
+import ProfileScreen from '../screens/ProfileScreen';
 import { colors } from '../styles/colors';
 
 const Stack = createNativeStackNavigator();
@@ -38,6 +41,9 @@ export default function AppNavigator() {
         <Stack.Screen name="NewsDetails" component={NewsDetailsScreen} />
         <Stack.Screen name="Search" component={SearchScreen} />
         <Stack.Screen name="Notifications" component={NotificationsScreen} />
+        <Stack.Screen name="Profile" component={ProfileScreen} />
+        <Stack.Screen name="Login" component={LoginScreen} />
+        <Stack.Screen name="Signup" component={SignupScreen} />
       </Stack.Navigator>
     </NavigationContainer>
   );

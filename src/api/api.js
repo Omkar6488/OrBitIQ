@@ -29,7 +29,12 @@ export const getSpaceNews = (params = { limit: LIST_LIMIT, ordering: '-published
 
 export const getNasaApod = async (params = { api_key: 'DEMO_KEY' }) => {
   try {
-    const data = await requestWithRetry(() => nasaApi.get(ENDPOINTS.NASA_APOD, { params }));
+    const mergedParams = {
+      api_key: 'DEMO_KEY',
+      thumbs: true,
+      ...params,
+    };
+    const data = await requestWithRetry(() => nasaApi.get(ENDPOINTS.NASA_APOD, { params: mergedParams }));
     await setCachedJson(STORAGE_KEYS.APOD_CACHE, data);
     return { ...data, __source: 'network' };
   } catch (error) {

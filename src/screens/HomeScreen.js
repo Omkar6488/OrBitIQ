@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Animated,
+  ActivityIndicator,
   FlatList,
   Image,
   Pressable,
@@ -11,6 +12,7 @@ import {
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
+import { WebView } from 'react-native-webview';
 import { getNasaApod, getSpaceNews } from '../api/api';
 import EmptyState from '../components/EmptyState';
 import Loader from '../components/Loader';
@@ -19,10 +21,37 @@ import TopNavbar, { getNavbarContentOffset } from '../components/TopNavbar';
 import useFetch from '../hooks/useFetch';
 import { colors } from '../styles/colors';
 import globalStyles from '../styles/globalStyles';
-import { LIST_LIMIT } from '../utils/constants';
-import { getFavoriteNewsMap, toggleFavoriteNews } from '../services/favoritesService';
+import { APOD_PLACEHOLDER, LIST_LIMIT } from '../utils/constants';
+import { useAuth } from '../context/AuthContext';
+import { addBookmark, deleteBookmark, getBookmarks } from '../firebase/firestore';
 
 const AnimatedFlatList = Animated.createAnimatedComponent(FlatList);
+const fallbackApodImage = require('../../assets/splash-icon.png');
+
+const getApodVideoUrl = (apod) => {
+  const rawUrl = apod?.url;
+  if (!rawUrl) {
+    return null;
+  }
+
+  if (rawUrl.includes('youtube.com/watch')) {
+    const match = rawUrl.match(/[?&]v=([^&]+)/);
+    const id = match?.[1];
+    return id ? `https://www.youtube.com/embed/${id}` : rawUrl;
+  }
+
+  if (rawUrl.includes('youtu.be/')) {
+    const id = rawUrl.split('youtu.be/')[1]?.split(/[?&]/)[0];
+    return id ? `https://www.youtube.com/embed/${id}` : rawUrl;
+  }
+
+  if (rawUrl.includes('vimeo.com/')) {
+    const id = rawUrl.split('vimeo.com/')[1]?.split(/[?&]/)[0];
+    return id ? `https://player.vimeo.com/video/${id}` : rawUrl;
+  }
+
+  return rawUrl;
+};
 
 const sortByPublishedDate = (items) => {
   return [...items].sort(
@@ -39,7 +68,9 @@ export default function HomeScreen({
 }) {
   const insets = useSafeAreaInsets();
   const [newsItems, setNewsItems] = useState([]);
-  const [favoriteNewsMap, setFavoriteNewsMap] = useState({});
+  const [apodImageFailed, setApodImageFailed] = useState(false);
+  const [apodVideoFailed, setApodVideoFailed] = useState(false);
+  const [bookmarkMap, setBookmarkMap] = useState({});
   const [offset, setOffset] = useState(0);
   const [hasMore, setHasMore] = useState(true);
   const [loadingInitial, setLoadingInitial] = useState(true);
@@ -48,6 +79,7 @@ export default function HomeScreen({
   const [newsError, setNewsError] = useState(null);
   const lastRefreshSignal = useRef(refreshSignal);
   const fadeIn = useRef(new Animated.Value(0)).current;
+  const { currentUser } = useAuth();
 
   const fetchApod = useCallback(() => getNasaApod({ api_key: 'DEMO_KEY' }), []);
 
@@ -121,8 +153,25 @@ export default function HomeScreen({
 
   useEffect(() => {
     loadNewsPage({ nextOffset: 0, reset: true });
-    getFavoriteNewsMap().then(setFavoriteNewsMap);
   }, [loadNewsPage]);
+
+  useEffect(() => {
+    if (!currentUser?.uid) {
+      setBookmarkMap({});
+      return;
+    }
+
+    getBookmarks(currentUser.uid).then((items) => {
+      const nextMap = items.reduce((acc, item) => {
+        const key = item?.sourceId || item?.id;
+        if (key) {
+          acc[key] = item;
+        }
+        return acc;
+      }, {});
+      setBookmarkMap(nextMap);
+    });
+  }, [currentUser?.uid]);
 
   useEffect(() => {
     if (refreshSignal === lastRefreshSignal.current) {
@@ -158,10 +207,71 @@ export default function HomeScreen({
     [navigation]
   );
 
-  const toggleNewsFavorite = useCallback(async (article) => {
-    const next = await toggleFavoriteNews(article);
-    setFavoriteNewsMap(next.favoritesMap);
-  }, []);
+  const toggleNewsFavorite = useCallback(
+    async (article) => {
+      if (!currentUser?.uid) {
+        return;
+      }
+
+      const sourceId = article?.id || article?.url;
+      if (!sourceId) {
+        return;
+      }
+
+      const existing = bookmarkMap[sourceId];
+      if (existing?.id) {
+        await deleteBookmark(currentUser.uid, existing.id);
+        setBookmarkMap((current) => {
+          const next = { ...current };
+          delete next[sourceId];
+          return next;
+        });
+        return;
+      }
+
+      const payload = {
+        sourceId,
+        title: article?.title || 'Untitled article',
+        type: 'news',
+        timestamp: Date.now(),
+        data: article,
+      };
+
+      const docRef = await addBookmark(currentUser.uid, payload);
+      setBookmarkMap((current) => ({
+        ...current,
+        [sourceId]: { id: docRef.id, ...payload },
+      }));
+    },
+    [bookmarkMap, currentUser?.uid]
+  );
+
+  const apodImageUrl = useMemo(() => {
+    if (!apod) {
+      return null;
+    }
+    if (apod.media_type === 'image') {
+      return apod.hdurl || apod.url || APOD_PLACEHOLDER.url || null;
+    }
+    return null;
+  }, [apod]);
+
+  const apodVideoUrl = useMemo(() => getApodVideoUrl(apod), [apod]);
+
+  useEffect(() => {
+    setApodImageFailed(false);
+  }, [apodImageUrl]);
+
+  useEffect(() => {
+    setApodVideoFailed(false);
+  }, [apodVideoUrl]);
+
+  const apodImageSource = useMemo(() => {
+    if (apodImageFailed || !apodImageUrl) {
+      return fallbackApodImage;
+    }
+    return { uri: apodImageUrl };
+  }, [apodImageFailed, apodImageUrl]);
 
   const openApodDetails = useCallback(() => {
     if (!apod) {
@@ -172,14 +282,14 @@ export default function HomeScreen({
       article: {
         id: `apod-${apod.date}`,
         title: apod.title,
-        image_url: apod.url,
+        image_url: apodImageUrl,
         summary: apod.explanation,
         published_at: apod.date,
         news_site: 'NASA APOD',
-        url: apod?.hdurl || apod?.url,
+        url: apod?.url || apod?.hdurl || apodImageUrl,
       },
     });
-  }, [apod, navigation]);
+  }, [apod, apodImageUrl, navigation]);
 
   const topPadding = embedded ? contentTopPadding : getNavbarContentOffset(insets);
   const apodSource = apod?.__source || 'network';
@@ -192,12 +302,12 @@ export default function HomeScreen({
         <NewsCard
           article={item}
           onPress={() => openNewsDetails(item)}
-          isFavorite={!!favoriteNewsMap[key]}
+          isFavorite={!!bookmarkMap[key]}
           onToggleFavorite={() => toggleNewsFavorite(item)}
         />
       );
     },
-    [favoriteNewsMap, openNewsDetails, toggleNewsFavorite]
+    [bookmarkMap, openNewsDetails, toggleNewsFavorite]
   );
 
   const listHeader = useMemo(
@@ -206,30 +316,66 @@ export default function HomeScreen({
         <Text style={styles.heroTitle}>Intelligence Feed</Text>
         <Text style={styles.heroSubtitle}>Real-time orbital journalism and deep-space briefings.</Text>
 
-        {apodLoading && !apod ? <Loader count={1} height={238} /> : null}
+        {apodLoading && !apod ? (
+          <View style={styles.apodLoading}>
+            <ActivityIndicator size="large" color={colors.primary} />
+          </View>
+        ) : null}
 
         {!!apod && (
           <Pressable style={styles.featuredPressable} onPress={openApodDetails}>
-            <LinearGradient
-              colors={['rgba(50, 208, 255, 0.22)', 'rgba(123, 97, 255, 0.28)', 'rgba(7, 12, 28, 0.8)']}
-              style={styles.featuredCard}
-            >
-              {!!apod.url && <Image source={{ uri: apod.url }} style={styles.featuredImage} />}
-              <View style={styles.featuredContent}>
-                <Text style={styles.featuredTag}>NASA APOD</Text>
-                <Text style={styles.featuredTitle} numberOfLines={2}>
-                  {apod.title}
-                </Text>
-                <Text style={styles.featuredDescription} numberOfLines={3}>
-                  {apod.explanation}
-                </Text>
-                {apodSource !== 'network' ? (
-                  <Text style={styles.fallbackPill}>
-                    {apodSource === 'cache' ? 'Showing cached APOD' : 'Showing curated fallback'}
+            <View style={styles.featuredCard}>
+              {apod?.media_type === 'video' ? (
+                apodVideoFailed || !apodVideoUrl ? (
+                  <View style={styles.featuredVideoFallback}>
+                    <Text style={styles.featuredVideoFallbackText}>Video cannot be loaded</Text>
+                  </View>
+                ) : (
+                  <WebView
+                    source={{ uri: apodVideoUrl }}
+                    style={styles.featuredVideo}
+                    javaScriptEnabled
+                    domStorageEnabled
+                    allowsInlineMediaPlayback
+                    mediaPlaybackRequiresUserAction={false}
+                    onError={() => setApodVideoFailed(true)}
+                  />
+                )
+              ) : (
+                <Image
+                  source={apodImageSource}
+                  style={styles.featuredImage}
+                  resizeMode="cover"
+                  onError={() => setApodImageFailed(true)}
+                />
+              )}
+              <LinearGradient
+                colors={['rgba(50, 208, 255, 0.22)', 'rgba(123, 97, 255, 0.28)', 'rgba(7, 12, 28, 0.8)']}
+                style={styles.featuredContentGradient}
+              >
+                <View style={styles.featuredContent}>
+                  <View style={styles.featuredTagRow}>
+                    <Text style={styles.featuredTag}>NASA APOD</Text>
+                    {apod?.media_type === 'video' ? (
+                      <View style={styles.featuredBadge}>
+                        <Text style={styles.featuredBadgeText}>VIDEO</Text>
+                      </View>
+                    ) : null}
+                  </View>
+                  <Text style={styles.featuredTitle} numberOfLines={2}>
+                    {apod.title}
                   </Text>
-                ) : null}
-              </View>
-            </LinearGradient>
+                  <Text style={styles.featuredDescription} numberOfLines={3}>
+                    {apod.explanation}
+                  </Text>
+                  {apodSource !== 'network' ? (
+                    <Text style={styles.fallbackPill}>
+                      {apodSource === 'cache' ? 'Showing cached APOD' : 'Showing curated fallback'}
+                    </Text>
+                  ) : null}
+                </View>
+              </LinearGradient>
+            </View>
           </Pressable>
         )}
 
@@ -256,7 +402,18 @@ export default function HomeScreen({
         <Text style={[globalStyles.sectionTitle, styles.sectionTitle]}>Latest Space News</Text>
       </Animated.View>
     ),
-    [apod, apodLoading, apodSource, fadeIn, openApodDetails, openNewsDetails, trending]
+    [
+      apod,
+      apodImageSource,
+      apodLoading,
+      apodSource,
+      apodVideoFailed,
+      apodVideoUrl,
+      fadeIn,
+      openApodDetails,
+      openNewsDetails,
+      trending,
+    ]
   );
 
   if (loadingInitial && newsItems.length === 0 && !refreshing) {
@@ -362,9 +519,39 @@ const styles = StyleSheet.create({
     borderColor: 'rgba(255,255,255,0.22)',
     overflow: 'hidden',
   },
+  featuredContentGradient: {
+    flex: 1,
+  },
   featuredImage: {
     width: '100%',
     height: 214,
+  },
+  featuredVideo: {
+    width: '100%',
+    height: 214,
+    backgroundColor: 'black',
+  },
+  featuredVideoFallback: {
+    width: '100%',
+    height: 214,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: 'rgba(8,12,20,0.9)',
+  },
+  featuredVideoFallbackText: {
+    color: colors.textSecondary,
+    fontSize: 12,
+    fontWeight: '600',
+  },
+  apodLoading: {
+    height: 238,
+    borderRadius: 24,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.18)',
+    backgroundColor: 'rgba(255,255,255,0.04)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 18,
   },
   featuredContent: {
     padding: 14,
@@ -374,6 +561,25 @@ const styles = StyleSheet.create({
     fontSize: 11,
     fontWeight: '700',
     letterSpacing: 0.8,
+  },
+  featuredTagRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  featuredBadge: {
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.35)',
+    backgroundColor: 'rgba(255,255,255,0.12)',
+  },
+  featuredBadgeText: {
+    color: colors.textPrimary,
+    fontSize: 10,
+    fontWeight: '700',
+    letterSpacing: 0.6,
   },
   featuredTitle: {
     marginTop: 8,

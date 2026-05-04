@@ -11,6 +11,7 @@ import VehiclesScreen from './VehiclesScreen';
 import MapScreen from './MapScreen';
 import FavoritesScreen from './FavoritesScreen';
 import globalStyles from '../styles/globalStyles';
+import { useAuth } from '../context/AuthContext';
 
 const HUB_TABS = [
   { key: 'feed', label: 'Feed', title: 'Intelligence Feed' },
@@ -25,6 +26,7 @@ const NAV_SCROLL_DISTANCE = NAVBAR_HEIGHT + 12;
 
 export default function MainHubScreen({ navigation }) {
   const insets = useSafeAreaInsets();
+  const { isLoggedIn } = useAuth();
   const [activeTab, setActiveTab] = useState('feed');
   const [refreshSignal, setRefreshSignal] = useState(0);
   const scrollY = useRef(new Animated.Value(0)).current;
@@ -110,6 +112,9 @@ export default function MainHubScreen({ navigation }) {
           title={activeTabMeta.title}
           onSearchPress={() => navigation.navigate('Search', { initialType: searchType })}
           onNotifyPress={() => navigation.navigate('Notifications')}
+          onAuthPress={() => navigation.navigate(isLoggedIn ? 'Profile' : 'Login')}
+          authIcon={isLoggedIn ? 'person-outline' : 'log-in-outline'}
+          showAuth
           showNotifyBadge
           showSearch
           showNotify
